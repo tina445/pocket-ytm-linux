@@ -1,0 +1,128 @@
+pkgname=pocket-ytm-linux
+pkgver=0.1.4
+pkgrel=1
+pkgdesc='Pocket Music local development build'
+arch=('x86_64')
+options=('!lto')
+url='https://github.com/tina445/pocket-ytm-linux'
+license=('MIT')
+
+depends=(
+    'alsa-lib'
+    'deno'
+    'ffmpeg'
+    'fontconfig'
+    'libx11'
+    'libxcb'
+    'libxkbcommon'
+    'libxkbcommon-x11'
+    'openssl'
+    'python'
+    'python-websocket-client'
+    'python-ytmusicapi'
+    'vulkan-icd-loader'
+    'wayland'
+    'xdg-utils'
+    'yt-dlp'
+)
+
+makedepends=(
+    'cargo'
+    'clang'
+    'git'
+    'pkgconf'
+)
+
+optdepends=(
+    'chromium: Google 빠른 로그인'
+    'google-chrome: Google 빠른 로그인'
+    'pipewire-alsa: PipeWire 환경에서 ALSA 지원'
+)
+
+provides=('pocket-ytm')
+conflicts=('pocket-ytm')
+
+source=(
+    'pocket-ytm'
+    'pocket-ytm.desktop'
+)
+
+sha256sums=(
+    'SKIP'
+    'SKIP'
+)
+
+# packaging/arch -> repository root
+_repo_root="$(realpath "$startdir/../..")"
+
+prepare() {
+    cd "$_repo_root"
+
+    export RUSTUP_TOOLCHAIN=stable
+
+    cargo fetch \
+        --locked \
+        --target x86_64-unknown-linux-gnu
+}
+
+build() {
+    cd "$_repo_root"
+
+    export RUSTUP_TOOLCHAIN=stable
+
+    # Do not write build artifacts into the working tree's normal target/.
+    export CARGO_TARGET_DIR="$srcdir/cargo-target"
+
+    cargo build \
+        --frozen \
+        --release \
+        --bin pocket-ytm
+}
+
+check() {
+    cd "$_repo_root"
+
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR="$srcdir/cargo-target"
+
+    cargo test \
+        --frozen \
+        --bin pocket-ytm
+
+    PYTHONPATH="$PWD/backend" \
+        python -m unittest discover \
+        -s backend \
+        -p 'test_*.py'
+}
+
+package() {
+    cd "$_repo_root"
+
+    install -Dm755 \
+        "$srcdir/cargo-target/release/pocket-ytm" \
+        "$pkgdir/usr/lib/pocket-ytm/pocket-ytm"
+
+    install -Dm644 \
+        backend/ytmusic_bridge.py \
+        "$pkgdir/usr/lib/pocket-ytm/backend/ytmusic_bridge.py"
+
+    install -Dm644 \
+        backend/yt_dlp_resolver.py \
+        "$pkgdir/usr/lib/pocket-ytm/backend/yt_dlp_resolver.py"
+
+    install -Dm644 \
+        backend/chrome_login.py \
+        "$pkgdir/usr/lib/pocket-ytm/backend/chrome_login.py"
+
+    install -Dm755 \
+        "$srcdir/pocket-ytm" \
+        "$pkgdir/usr/bin/pocket-ytm"
+
+    install -Dm644 \
+        "$srcdir/pocket-ytm.desktop" \
+        "$pkgdir/usr/share/applications/pocket-ytm.desktop"
+
+    install -Dm644 \
+        LICENSE \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

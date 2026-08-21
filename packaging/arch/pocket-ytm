@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+export PYTHONPATH="/usr/lib/pocket-ytm/python${PYTHONPATH:+:$PYTHONPATH}"
+
+export POCKET_YTM_PYTHON="${POCKET_YTM_PYTHON:-/usr/bin/python}"
+export POCKET_YTM_BRIDGE="${POCKET_YTM_BRIDGE:-/usr/lib/pocket-ytm/backend/ytmusic_bridge.py}"
+export POCKET_YTM_RESOLVER="${POCKET_YTM_RESOLVER:-/usr/lib/pocket-ytm/backend/yt_dlp_resolver.py}"
+export POCKET_YTM_FFMPEG="${POCKET_YTM_FFMPEG:-/usr/bin/ffmpeg}"
+export POCKET_YTM_DENO="${POCKET_YTM_DENO:-/usr/bin/deno}"
+
+exec /usr/lib/pocket-ytm/pocket-ytm "$@"
