@@ -41,7 +41,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/linux-v') && github.ref_name) || '' }}
 
-    steps:
+    steps: 
       - name: Set up Arch build environment
         shell: bash
         run: |

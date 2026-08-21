@@ -481,7 +481,6 @@ impl PocketYtmApp {
     pub fn load_initial(&mut self, cx: &mut Context<Self>) {
         self.load_auth_status(cx);
         self.load_home(cx);
-        #[cfg(target_os = "macos")]
         self.check_for_updates(false, cx);
     }
 
