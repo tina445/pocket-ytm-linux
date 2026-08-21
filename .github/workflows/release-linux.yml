@@ -1,0 +1,385 @@
+name: Release Linux
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "linux-v[0-9]+.[0-9]+.[0-9]+*"
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing linux-v-prefixed tag to release
+        required: true
+        type: string
+
+      replace_assets:
+        description: Replace assets of an existing release (repair only)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-linux-${{ github.ref_name }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  arch-x86_64:
+    runs-on: ubuntu-latest
+
+    container:
+      image: archlinux:base-devel
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/linux-v') && github.ref_name) || '' }}
+
+    steps:
+      - name: Set up Arch build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm \
+            git \
+            github-cli \
+            namcap \
+            desktop-file-utils
+
+      - name: Check out release source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+
+      - name: Create package builder
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          useradd --create-home builder
+
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' \
+            > /etc/sudoers.d/builder
+
+          chmod 0440 /etc/sudoers.d/builder
+
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo_version=$(
+            cargo metadata --no-deps --format-version 1 \
+              | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])'
+          )
+
+          pkg_version=$(
+            bash -c '
+              source packaging/arch/PKGBUILD
+              printf "%s\n" "$pkgver"
+            '
+          )
+
+          if [[ "$cargo_version" != "$pkg_version" ]]; then
+            echo \
+              "Cargo version $cargo_version does not match PKGBUILD version $pkg_version" \
+              >&2
+            exit 1
+          fi
+
+          if [[ -n "$RELEASE_TAG" ]]; then
+            if [[ "$RELEASE_TAG" != linux-v* ]]; then
+              echo \
+                "Linux release tag must start with linux-v: $RELEASE_TAG" \
+                >&2
+              exit 1
+            fi
+
+            tag_version=${RELEASE_TAG#linux-v}
+
+            if [[ "$cargo_version" != "$tag_version" ]]; then
+              echo \
+                "Cargo version $cargo_version does not match tag $RELEASE_TAG" \
+                >&2
+              exit 1
+            fi
+          fi
+
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install package dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_commit=$(git rev-parse HEAD)
+
+          cd packaging/arch
+
+          sudo -u builder env \
+            makepkg \
+              --syncdeps \
+              --noconfirm \
+              --nobuild
+
+      - name: Test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo -u builder env \
+            RUSTUP_TOOLCHAIN=stable \
+            cargo test --locked --bin pocket-ytm
+
+          sudo -u builder env \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" \
+            python3 -m unittest discover \
+              -s backend \
+              -p 'test_*.py'
+
+      - name: Build Arch Linux release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_commit=$(git rev-parse HEAD)
+
+          cd packaging/arch
+
+          sudo -u builder env \
+            makepkg \
+              --cleanbuild \
+              --syncdeps \
+              --noconfirm \
+              --nocheck
+
+      - name: Verify Arch Linux package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd packaging/arch
+
+          package=$(
+            find . \
+              -maxdepth 1 \
+              -type f \
+              -name 'pocket-ytm-*.pkg.tar.zst' \
+              ! -name '*-debug-*' \
+              -print \
+              | head -n 1
+          )
+
+          if [[ -z "$package" ]]; then
+            echo "Arch Linux package was not produced" >&2
+            exit 1
+          fi
+
+          package=$(realpath "$package")
+          asset=$(basename "$package")
+
+          namcap PKGBUILD
+          namcap "$package"
+
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Install package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pacman -U \
+            --noconfirm \
+            "${{ steps.package.outputs.package }}"
+
+      - name: Verify installed package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pacman -Q pocket-ytm
+          pacman -Qk pocket-ytm
+
+          test -x /usr/bin/pocket-ytm
+          test -x /usr/lib/pocket-ytm/pocket-ytm
+
+          test -f \
+            /usr/lib/pocket-ytm/backend/ytmusic_bridge.py
+
+          test -f \
+            /usr/lib/pocket-ytm/backend/yt_dlp_resolver.py
+
+          test -f \
+            /usr/lib/pocket-ytm/backend/chrome_login.py
+
+          test -f \
+            /usr/share/applications/pocket-ytm.desktop
+
+          desktop-file-validate \
+            /usr/share/applications/pocket-ytm.desktop
+
+          if ldd /usr/lib/pocket-ytm/pocket-ytm \
+            | grep -q 'not found'
+          then
+            echo "Pocket Music has unresolved shared libraries" >&2
+            ldd /usr/lib/pocket-ytm/pocket-ytm >&2
+            exit 1
+          fi
+
+      - name: Verify installed runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m py_compile \
+            /usr/lib/pocket-ytm/backend/chrome_login.py \
+            /usr/lib/pocket-ytm/backend/ytmusic_bridge.py \
+            /usr/lib/pocket-ytm/backend/yt_dlp_resolver.py
+
+          ffmpeg -version
+          deno --version
+          yt-dlp --version
+
+          resolver_response=$(
+            printf '%s\n' \
+              '{"id":1,"op":"ping"}' \
+            | python3 \
+                /usr/lib/pocket-ytm/backend/yt_dlp_resolver.py \
+                --deno /usr/bin/deno
+          )
+
+          python3 -c \
+            'import json,sys
+          value=json.loads(sys.argv[1])
+          assert value["id"] == 1
+          assert value["ok"]
+          assert value["data"]["ready"] is True
+          assert value["data"]["version"]' \
+            "$resolver_response"
+
+          bridge_response=$(
+            printf '%s\n' \
+              '{"id":1,"op":"authStatus","params":{}}' \
+            | python3 \
+                /usr/lib/pocket-ytm/backend/ytmusic_bridge.py \
+                --language ko \
+                --location KR \
+                --auth "$RUNNER_TEMP/pocket-music-test-auth.json"
+          )
+
+          python3 -c \
+            'import json,sys
+          value=json.loads(sys.argv[1])
+          assert value["id"] == 1
+          assert value["ok"]' \
+            "$bridge_response"
+
+      - name: Ensure release tag is unpublished
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "${{ inputs.replace_assets }}" != "true" ]]; then
+              echo \
+                "Release $RELEASE_TAG already exists; published assets are immutable" \
+                >&2
+              exit 1
+            fi
+
+            echo "Repair mode: existing assets will be replaced"
+          fi
+
+      - name: Generate checksums
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package="${{ steps.package.outputs.package }}"
+          asset="${{ steps.package.outputs.asset }}"
+
+          cp "$package" "$RUNNER_TEMP/$asset"
+
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "$asset" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Publish GitHub release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          asset="${{ steps.package.outputs.asset }}"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "$RUNNER_TEMP/$asset" \
+              "$RUNNER_TEMP/SHA256SUMS" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "$RUNNER_TEMP/$asset" \
+              "$RUNNER_TEMP/SHA256SUMS" \
+              --verify-tag \
+              --generate-notes \
+              --title "Pocket Music $RELEASE_TAG"
+          fi
+
+      - name: Verify published Linux package
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          asset="${{ steps.package.outputs.asset }}"
+
+          verify_dir=$(
+            mktemp -d \
+              "$RUNNER_TEMP/pocket-published-linux-release.XXXXXX"
+          )
+
+          gh release download "$RELEASE_TAG" \
+            --dir "$verify_dir" \
+            --pattern "$asset"
+
+          gh release download "$RELEASE_TAG" \
+            --dir "$verify_dir" \
+            --pattern SHA256SUMS
+
+          cmp \
+            "$RUNNER_TEMP/$asset" \
+            "$verify_dir/$asset"
+
+          cmp \
+            "$RUNNER_TEMP/SHA256SUMS" \
+            "$verify_dir/SHA256SUMS"
+
+          (
+            cd "$verify_dir"
+            sha256sum --check SHA256SUMS
+          )

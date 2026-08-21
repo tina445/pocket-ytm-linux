@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pocket Y
+Comment=Native YouTube Music client
+Exec=pocket-ytm
+Icon=multimedia-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=YouTube;Music;Audio;
+StartupNotify=true
