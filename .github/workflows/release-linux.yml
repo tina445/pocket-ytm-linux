@@ -14,18 +14,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing linux-v-prefixed tag to release
-        required: true
+        description: Existing linux-v-prefixed tag to build
+        required: false
         type: string
 
-      replace_assets:
-        description: Replace assets of an existing release (repair only)
-        required: false
-        default: false
-        type: boolean
-
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-linux-${{ github.ref_name }}-${{ inputs.tag }}
@@ -41,7 +35,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/linux-v') && github.ref_name) || '' }}
 
-    steps: 
+    steps:
       - name: Set up Arch build environment
         shell: bash
         run: |
@@ -50,7 +44,6 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --needed --noconfirm \
             git \
-            github-cli \
             rust \
             python \
             sudo \
@@ -129,8 +122,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          source_commit=$(git rev-parse HEAD)
-
           cd packaging/arch
 
           sudo -u builder env \
@@ -158,8 +149,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          source_commit=$(git rev-parse HEAD)
 
           cd packaging/arch
 
@@ -293,26 +282,7 @@ jobs:
           assert value["ok"]' \
             "$bridge_response"
 
-      - name: Ensure release tag is unpublished
-        if: env.RELEASE_TAG != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ "${{ inputs.replace_assets }}" != "true" ]]; then
-              echo \
-                "Release $RELEASE_TAG already exists; published assets are immutable" \
-                >&2
-              exit 1
-            fi
-
-            echo "Repair mode: existing assets will be replaced"
-          fi
-
-      - name: Generate checksums
+      - name: Generate release artifacts
         if: env.RELEASE_TAG != ''
         shell: bash
         run: |
@@ -321,70 +291,24 @@ jobs:
           package="${{ steps.package.outputs.package }}"
           asset="${{ steps.package.outputs.asset }}"
 
-          cp "$package" "$RUNNER_TEMP/$asset"
+          release_dir="$RUNNER_TEMP/release"
+          mkdir -p "$release_dir"
+
+          cp "$package" "$release_dir/$asset"
 
           (
-            cd "$RUNNER_TEMP"
+            cd "$release_dir"
             sha256sum "$asset" > SHA256SUMS
             sha256sum --check SHA256SUMS
           )
 
-      - name: Publish GitHub release
+      - name: Upload release artifacts
         if: env.RELEASE_TAG != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          asset="${{ steps.package.outputs.asset }}"
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" \
-              "$RUNNER_TEMP/$asset" \
-              "$RUNNER_TEMP/SHA256SUMS" \
-              --clobber
-          else
-            gh release create "$RELEASE_TAG" \
-              "$RUNNER_TEMP/$asset" \
-              "$RUNNER_TEMP/SHA256SUMS" \
-              --verify-tag \
-              --generate-notes \
-              --title "Pocket Music $RELEASE_TAG"
-          fi
-
-      - name: Verify published Linux package
-        if: env.RELEASE_TAG != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          asset="${{ steps.package.outputs.asset }}"
-
-          verify_dir=$(
-            mktemp -d \
-              "$RUNNER_TEMP/pocket-published-linux-release.XXXXXX"
-          )
-
-          gh release download "$RELEASE_TAG" \
-            --dir "$verify_dir" \
-            --pattern "$asset"
-
-          gh release download "$RELEASE_TAG" \
-            --dir "$verify_dir" \
-            --pattern SHA256SUMS
-
-          cmp \
-            "$RUNNER_TEMP/$asset" \
-            "$verify_dir/$asset"
-
-          cmp \
-            "$RUNNER_TEMP/SHA256SUMS" \
-            "$verify_dir/SHA256SUMS"
-
-          (
-            cd "$verify_dir"
-            sha256sum --check SHA256SUMS
-          )
+        uses: actions/upload-artifact@v4
+        with:
+          name: pocket-ytm-linux-${{ steps.version.outputs.version }}
+          path: |
+            ${{ runner.temp }}/release/${{ steps.package.outputs.asset }}
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
