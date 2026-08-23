@@ -1,4 +1,4 @@
-# Pocket Music
+# Pocket Music for Linux
 
 <img src="assets/pocket-music-library.png" alt="Pocket Music 보관함 화면" width="512">
 
@@ -7,17 +7,33 @@ WebView, Chromium 없이 Rust로 구현된 네이티브 YouTube Music 클라이�
 - YouTube Music Premium 계정이 없어도 광고 없이 재생할 수 있습니다. 단, 비로그인 상태에서는 YouTube 정책에 따라 일부 영상 재생이 제한될 수 있습니다.
 - Chromium을 띄우지 않아 YouTube Music PWA보다 RAM을 적게 사용합니다.
 
+**본 레포지토리는 [chamchi0809/pocket-ytm](https://github.com/chamchi0809/pocket-ytm)을 기반으로 리눅스 호환성 및 패키지를 제공합니다.**
+
 ## 설치
 
-현재 배포판은 Apple Silicon Mac용입니다.
+### Arch
 
-1. [최신 릴리스](https://github.com/chamchi0809/pocket-ytm/releases/latest)에서 `Pocket-Music-*-macos-aarch64.zip`을 받습니다.
-2. 압축을 풀고 `Pocket Music.app`을 Applications 폴더로 옮깁니다.
+### 릴리스 패키지
+1. [최신 릴리스](https://github.com/tina445/pocket-ytm-linux/releases/tag/linux-v0.1.4)에서 `pocket-ytm-linux-0.1.4-1-x86_64.pkg.tar.zst`을 받습니다.
+2. 아래 명령을 실행합니다.
+```sh
+sudo pacman -U pocket-ytm-linux-0.1.4-1-x86_64.pkg.tar.zst
+```
 3. 앱을 실행합니다.
 
-macOS가 첫 실행을 막으면 Finder에서 앱을 우클릭해 `열기`를 선택하세요. 그래도 차단되면 `시스템 설정 → 개인정보 보호 및 보안`에서 `확인 없이 열기`를 누르면 됩니다.
+### 소스코드 빌드
+- 아래 명령어를 실행합니다.
+  ```sh
+  git clone https://github.com/tina445/pocket-ytm-linux
+  cd packaging/arch
+  makepkg -si
+  ```
 
-앱은 시작할 때 새 릴리스를 확인합니다. 업데이트해도 로그인, 쿠키, 볼륨 설정은 그대로 유지됩니다.
+- 현재 AUR 및 AUR 헬퍼를 이용한 설치는 지원하지 않습니다.
+- PipeWire을 사용하는 환경의 경우 ALSA 호환 출력을 위해 `pipewire-alsa` 패키지가 필요할 수 있습니다. 아래 명령을 실행하세요.
+  ```sh
+  sudo pacman -S pipewire-alsa
+  ```
 
 ## 기능
 
@@ -27,6 +43,8 @@ macOS가 첫 실행을 막으면 Finder에서 앱을 우클릭해 `열기`를 �
 - 세션 트랙 캐시와 다음·이전 곡 prefetch
 - YouTube Music 라디오 큐, 가사, 좋아요
 - GitHub Releases 기반 자동 업데이트
+
+> 아래 내용 일부는 원본 저장소 [chamchi0809/pocket-ytm](https://github.com/chamchi0809/pocket-ytm)을 기반으로 하며, Linux 환경에서는 동작이나 경로가 다를 수 있습니다.
 
 ## 로그인
 
@@ -56,7 +74,7 @@ Pocket Music은 GPUI로 화면을 그리고 rodio/CPAL로 오디오를 출력합
 cargo run --release
 ```
 
-### 테스트와 패키징
+### 테스트
 
 ```sh
 cargo fmt --all -- --check
@@ -65,18 +83,24 @@ cargo test
 ./scripts/package-macos.sh
 ```
 
-패키징 결과는 `dist/Pocket Music.app`에 생성됩니다. Apple Silicon용 ytmusicapi, yt-dlp, Deno, FFmpeg, ffprobe와 업데이트 helper가 모두 앱에 포함됩니다.
+### 패키징 (Arch)
+```sh
+cd packaging/arch
+makepkg -si
+```
+
+패키징 결과는 packaging/arch 아래에 `.pkg.tar.zst` 형식으로 생성됩니다.
 
 ### 릴리스
 
-`Cargo.toml` 버전과 같은 태그를 push하면 GitHub Actions가 Apple Silicon 앱과 서명된 업데이트 manifest를 릴리스에 올립니다.
-
+Linux 릴리스는 `linux-vX.Y.Z` 형식의 태그를 사용합니다.
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag linux-v0.2.0
+git push origin linux-v0.2.0
 ```
-
-릴리스에는 `UPDATE_SIGNING_KEY_BASE64` Actions secret이 필요합니다. 공개 배포에서 macOS 경고를 없애려면 Developer ID 서명과 notarization도 설정해야 합니다.
+태그가 push되면 GitHub Actions가 Linux 패키지를 빌드하고 테스트 및 설치 검증을 수행합니다.
+검증된 패키지와 SHA256SUMS는 GitHub Actions artifact로 생성됩니다.
+GitHub Release의 제목, Release Notes, `Latest` 및 `Pre-release` 표시는 수동으로 관리합니다.
 
 ### 환경 변수
 
